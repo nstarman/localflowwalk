@@ -620,7 +620,7 @@ def _local_flow_walk(
     n_max: int | None = None,
     config: WalkConfig = WalkConfig(),  # noqa: B008
     direction: Direction = "forward",
-    metadata: StateMetadata = StateMetadata(),  # noqa: B008
+    metadata: StateMetadata | None = None,
     usys: u.AbstractUnitSystem | None = None,
 ) -> WalkLocalFlowResult:
     """Implement for Quantity-valued phase-space data.
@@ -699,14 +699,15 @@ def _local_flow_walk(
     )
 
     """
-    # Process the metadata
+    # Process the metadata. ``metadata`` is None whenever the caller omitted
+    # it -- a shared ``StateMetadata()`` default would be one instance created
+    # at definition time, and its ``_data`` is a plain dict, so a mutation
+    # reaching through that attribute would leak into every later call.
     if usys is not None:
-        metadata = StateMetadata(**(dict(metadata) | {"usys": usys}))
+        carried = dict(metadata) if metadata is not None else {}
+        metadata = StateMetadata(**(carried | {"usys": usys}))
 
-    usys = metadata.get("usys")
-    if not isinstance(usys, u.AbstractUnitSystem):
-        msg = "`usys` must be an `unxt.AbstractUnitSystem`."  # type: ignore[unreachable]
-        raise TypeError(msg)
+    usys = _require_usys(metadata)
 
     if not isinstance(metric_scale, u.AbstractQuantity):
         msg = "`metric_scale` must be an `unxt.AbstractQuantity`."  # type: ignore[unreachable]

@@ -1,5 +1,8 @@
 """Tests for the phase flow walking algorithm."""
 
+import ast
+import pathlib
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -671,3 +674,40 @@ class TestCombineFlowWalks:
         # Should raise an error when combining
         with pytest.raises((eqx.EquinoxRuntimeError, ValueError)):
             pcf.combine_results(res1, res2)
+
+
+def test_no_function_takes_a_state_metadata_default():
+    """``StateMetadata()`` as a default is one instance shared by every call.
+
+    Its *attributes* are frozen -- ``m["usys"] = ...`` raises -- but ``_data``
+    is an ordinary dict, so a mutation reaching through that private attribute
+    persists into every subsequent call that omits the argument. ``None`` plus
+    an in-body construction gives each call its own.
+
+    This sweeps the package source rather than the two sites that had the
+    defect, because the hazard is the construct, not the call site. It reads
+    the source instead of introspecting objects because these functions are
+    ``plum`` dispatches: the module attribute is a ``plum.Function``, which
+    ``inspect.isfunction`` rejects -- so an object-level sweep silently skips
+    exactly the functions at issue.
+    """
+    root = pathlib.Path(next(iter(pcf.__path__)))
+    offenders = []
+    for path in sorted(root.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            args = node.args
+            defaults = [
+                *args.defaults,
+                *(d for d in args.kw_defaults if d is not None),
+            ]
+            offenders += [
+                f"{path.relative_to(root)}:{d.lineno} in {node.name}()"
+                for d in defaults
+                if isinstance(d, ast.Call)
+                and isinstance(d.func, ast.Name)
+                and d.func.id == "StateMetadata"
+            ]
+
+    assert offenders == []

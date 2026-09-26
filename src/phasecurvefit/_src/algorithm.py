@@ -278,7 +278,7 @@ def _local_flow_walk(
     terminate_indices: Set[int] | None = None,
     n_max: int | None = None,
     config: WalkConfig = WalkConfig(),  # noqa: B008
-    metadata: StateMetadata = StateMetadata(),  # noqa: B008
+    metadata: StateMetadata | None = None,
     direction: Direction = "forward",
 ) -> WalkLocalFlowResult:
     r"""Find an ordered path through phase-space using the local flow.
@@ -369,6 +369,12 @@ def _local_flow_walk(
     Array([4, 3, 2, 1, 0], dtype=int32)
 
     """
+    # ``None`` rather than a shared ``StateMetadata()``: the default would be
+    # a single instance created at definition time, and while the class is a
+    # frozen `eqx.Module`, its ``_data`` is an ordinary dict -- mutating it
+    # through that attribute would leak into every later call.
+    metadata = StateMetadata() if metadata is None else metadata
+
     if direction == "both":
         kwargs = {
             "start_idx": start_idx,
