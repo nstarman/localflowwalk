@@ -370,9 +370,9 @@ def _local_flow_walk(
 
     """
     # ``None`` rather than a shared ``StateMetadata()``: the default would be
-    # a single instance created at definition time, and while the class is a
-    # frozen `eqx.Module`, its ``_data`` is an ordinary dict -- mutating it
-    # through that attribute would leak into every later call.
+    # a single instance created at definition time, and ``StateMetadata`` stores
+    # its ``_data`` as a plain dict, so mutating it through that attribute would
+    # leak into every later call.
     metadata = StateMetadata() if metadata is None else metadata
 
     if direction == "both":
