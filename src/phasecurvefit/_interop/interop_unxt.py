@@ -707,7 +707,7 @@ def _local_flow_walk(
         carried = dict(metadata) if metadata is not None else {}
         metadata = StateMetadata(**(carried | {"usys": usys}))
 
-    usys = _require_usys(metadata)
+    usys = _require_usys(metadata, usys_kwarg=True)
 
     if not isinstance(metric_scale, u.AbstractQuantity):
         msg = "`metric_scale` must be an `unxt.AbstractQuantity`."  # type: ignore[unreachable]
@@ -776,15 +776,19 @@ def transform(
 # ==============================================================================
 
 
-def _require_usys(metadata: StateMetadata | None) -> u.AbstractUnitSystem:
+def _require_usys(
+    metadata: StateMetadata | None, *, usys_kwarg: bool = False
+) -> u.AbstractUnitSystem:
     # ``metadata`` is None whenever the caller omitted it: both the ``order``
     # facade and ChainOrderer forward it unconditionally.
     usys = metadata.get("usys") if metadata is not None else None
     if not isinstance(usys, u.AbstractUnitSystem):
-        msg = (
-            "`usys` must be provided for Quantity inputs, e.g. "
-            "order(q, p, metadata=StateMetadata(usys=...))."
+        example = (
+            "usys=...` or `metadata=StateMetadata(usys=...)"
+            if usys_kwarg
+            else "order(q, p, metadata=StateMetadata(usys=...))"
         )
+        msg = f"`usys` must be provided for Quantity inputs, e.g. `{example}`."
         raise TypeError(msg)
     return usys
 
