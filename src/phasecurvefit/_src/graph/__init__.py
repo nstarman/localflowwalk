@@ -10,7 +10,9 @@ the parent package -- so it can be lifted into its own library.
 
 __all__: tuple[str, ...] = (
     "boruvka",
+    "diameter_path",
     "largest_component",
 )
 
 from ._boruvka import boruvka, largest_component
+from ._tree import diameter_path

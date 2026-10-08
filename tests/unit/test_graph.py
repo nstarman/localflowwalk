@@ -13,8 +13,10 @@ from scipy.sparse.csgraph import connected_components, minimum_spanning_tree
 
 from phasecurvefit._src import graph as gr
 from phasecurvefit._src.graph._pointer import accumulate, find_roots, list_rank
+from phasecurvefit._src.orderers.mst import _diameter_path
 
 _boruvka = jax.jit(gr.boruvka, static_argnums=0)
+_diameter = jax.jit(gr.diameter_path, static_argnums=0)
 
 
 class TestPointer:
@@ -132,3 +134,33 @@ class TestBoruvka:
         mask, n_comp = gr.largest_component(labels, real)
         np.testing.assert_array_equal(np.asarray(mask), [1, 1, 0, 0, 0, 0])
         assert int(n_comp) == 3
+
+
+class TestDiameterPath:
+    """The tip-to-tip path equals ``_diameter_path`` on the same forest."""
+
+    @pytest.mark.parametrize("seed", range(30))
+    def test_matches_host(self, seed):
+        """Including alive sets that split the restricted tree into pieces."""
+        rng = np.random.default_rng(seed)
+        n = int(rng.integers(1, 60))
+        lo, hi, w, valid = _random_graph(rng, n, ties=False)
+        args = tuple(map(jnp.asarray, (lo, hi, w, valid)))
+        tree, _ = _boruvka(n, *args)
+        t, ref = _scipy_forest(n, lo, hi, w, valid)
+        comp = ref == ref[int(rng.integers(n))]
+        alive = comp & (rng.random(n) < (1.0 if seed % 2 else 0.8))
+        alive = alive if alive.any() else comp
+        full, blen = _diameter(n, *args[:3], tree, jnp.asarray(alive))
+        want = _diameter_path(t.tocsr(), np.flatnonzero(alive))
+        np.testing.assert_array_equal(np.asarray(full)[: int(blen)], want)
+        assert np.all(np.asarray(full)[int(blen) :] == want[-1])  # padded
+
+    def test_single_node(self):
+        """One alive node with no edges: the path is that node."""
+        z = jnp.zeros(1, jnp.int32)
+        full, blen = _diameter(
+            3, z, z, jnp.ones(1), jnp.zeros(1, bool), jnp.array([False, True, False])
+        )
+        assert int(blen) == 1
+        np.testing.assert_array_equal(np.asarray(full), [1, 1, 1])
