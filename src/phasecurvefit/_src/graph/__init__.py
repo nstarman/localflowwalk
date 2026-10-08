@@ -11,8 +11,11 @@ the parent package -- so it can be lifted into its own library.
 __all__: tuple[str, ...] = (
     "boruvka",
     "diameter_path",
+    "knn_edges",
     "largest_component",
+    "orient_flip",
 )
 
 from ._boruvka import boruvka, largest_component
+from ._edges import knn_edges, orient_flip
 from ._tree import diameter_path

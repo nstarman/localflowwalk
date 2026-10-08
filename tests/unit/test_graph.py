@@ -4,6 +4,8 @@ Each module is checked against its reference: scipy's csgraph, or the host
 helpers in ``orderers/mst.py`` that the ``SciPy()`` path still uses.
 """
 
+import functools
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -13,7 +15,7 @@ from scipy.sparse.csgraph import connected_components, minimum_spanning_tree
 
 from phasecurvefit._src import graph as gr
 from phasecurvefit._src.graph._pointer import accumulate, find_roots, list_rank
-from phasecurvefit._src.orderers.mst import _diameter_path
+from phasecurvefit._src.orderers.mst import _diameter_path, _edge_cosine
 
 _boruvka = jax.jit(gr.boruvka, static_argnums=0)
 _diameter = jax.jit(gr.diameter_path, static_argnums=0)
@@ -164,3 +166,48 @@ class TestDiameterPath:
         )
         assert int(blen) == 1
         np.testing.assert_array_equal(np.asarray(full), [1, 1, 1])
+
+
+class TestEdges:
+    """The kNN edge list follows the host formulas."""
+
+    def test_matches_host_formulas(self):
+        """Lengths, weights and keep mask, incl. missing/padded neighbours."""
+        rng = np.random.default_rng(3)
+        n, k = 50, 4
+        p = rng.normal(size=(n, 3)).astype(np.float32)
+        v = rng.normal(size=(n, 3)).astype(np.float32)
+        v[:5] = 0.0  # zero velocity: cosine defined as 0
+        nbr = rng.integers(0, n + 1, (n, k))  # n = missing
+        real = np.arange(n) < 45
+        f = jax.jit(
+            functools.partial(
+                gr.knn_edges,
+                jump_cap=2.0,
+                velocity_weight=0.7,
+                sever_cos_threshold=-0.2,
+            )
+        )
+        lo, hi, d, w, valid = map(np.asarray, f(*map(jnp.asarray, (p, v, nbr, real))))
+        rows, cols = np.repeat(np.arange(n), k), nbr.ravel()
+        ok = cols < n
+        c = np.minimum(cols, n - 1)
+        d_ref = np.linalg.norm(p[rows] - p[c], axis=1)
+        cos = _edge_cosine(v.astype(np.float64), rows, c)
+        np.testing.assert_allclose(d, d_ref, rtol=1e-6)
+        # atol: a self-neighbour has d = 0, cos = 1 -> w ~ 0 (float32 rounding)
+        np.testing.assert_allclose(
+            w, np.maximum(d_ref + 0.7 * (1 - cos), 1e-30), rtol=1e-5, atol=1e-6
+        )
+        keep = ok & real[rows] & real[c] & (d_ref <= 2.0) & (cos >= -0.2)
+        np.testing.assert_array_equal(valid, keep)
+        np.testing.assert_array_equal(lo, np.minimum(rows, c))
+        np.testing.assert_array_equal(hi, np.maximum(rows, c))
+
+    def test_orient_flip(self):
+        """Flip iff the path runs against the velocity; NaN velocity is ignored."""
+        p = jnp.stack([jnp.arange(5.0), jnp.zeros(5)], 1)
+        v = jnp.stack([-jnp.ones(5), jnp.zeros(5)], 1).at[2, 0].set(jnp.nan)
+        full, blen = jnp.arange(5), jnp.asarray(5)
+        assert bool(gr.orient_flip(p, v, full, blen))
+        assert not bool(gr.orient_flip(p, -v, full, blen))
