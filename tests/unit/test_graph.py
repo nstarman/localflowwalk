@@ -8,8 +8,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import connected_components, minimum_spanning_tree
 
+from phasecurvefit._src import graph as gr
 from phasecurvefit._src.graph._pointer import accumulate, find_roots, list_rank
+
+_boruvka = jax.jit(gr.boruvka, static_argnums=0)
 
 
 class TestPointer:
@@ -44,3 +49,86 @@ class TestPointer:
         steps, reached = map(np.asarray, jax.jit(list_rank)(jnp.asarray(succ)))
         np.testing.assert_array_equal(steps[order], np.arange(39, -1, -1))
         np.testing.assert_array_equal(reached, np.arange(50) < 40)
+
+
+def _random_graph(rng, n, *, ties):
+    """Draw an undirected edge list (lo <= hi) with invalid and self edges."""
+    e = int(rng.integers(0, 4 * n + 1))
+    a, b = rng.integers(0, n, e), rng.integers(0, n, e)
+    w = rng.integers(1, 4, e) if ties else rng.random(e) + 0.01
+    valid = (a != b) & (rng.random(e) < 0.9)
+    return np.minimum(a, b), np.maximum(a, b), w.astype(np.float32), valid
+
+
+def _scipy_graph(n, lo, hi, w, valid):
+    """Sparse graph for scipy; a pair listed twice keeps its smaller weight.
+
+    (``csr_matrix`` would *sum* duplicate entries.)
+    """
+    best = {}
+    for i, j, ww in zip(lo[valid], hi[valid], w[valid], strict=True):
+        best[(int(i), int(j))] = min(best.get((int(i), int(j)), np.inf), float(ww))
+    rows = [i for i, _ in best]
+    cols = [j for _, j in best]
+    vals = np.maximum(list(best.values()), 1e-30)
+    return csr_matrix((vals, (rows, cols)), shape=(n, n)), best
+
+
+def _scipy_forest(n, lo, hi, w, valid):
+    """Return scipy's MST (symmetric) and its component labels."""
+    g, _ = _scipy_graph(n, lo, hi, w, valid)
+    t = minimum_spanning_tree(g)
+    t = t + t.T
+    return t, connected_components(t, directed=False)[1]
+
+
+def _edge_set(lo, hi, mask):
+    return {(int(i), int(j)) for i, j in zip(lo[mask], hi[mask], strict=True)}
+
+
+class TestBoruvka:
+    """Minimum spanning forest and components equal scipy's."""
+
+    @pytest.mark.parametrize("seed", range(30))
+    @pytest.mark.parametrize("ties", [False, True])
+    def test_matches_scipy(self, seed, ties):
+        """Same partition, weight and edge count; the same edges if no ties."""
+        rng = np.random.default_rng(seed)
+        n = int(rng.integers(1, 60))
+        lo, hi, w, valid = _random_graph(rng, n, ties=ties)
+        tree, labels = map(
+            np.asarray, _boruvka(n, *map(jnp.asarray, (lo, hi, w, valid)))
+        )
+        t, ref = _scipy_forest(n, lo, hi, w, valid)
+        for i in range(n):  # label = smallest node of the component
+            assert labels[i] == np.flatnonzero(ref == ref[i]).min()
+        assert tree.sum() == n - len(np.unique(ref))
+        assert float(w[tree].sum()) == pytest.approx(float(t.sum()) / 2, rel=1e-5)
+        if not ties:
+            tc = t.tocoo()
+            want = {
+                (int(i), int(j)) for i, j in zip(tc.row, tc.col, strict=True) if i < j
+            }
+            assert _edge_set(lo, hi, tree) == want
+
+    def test_no_edges(self):
+        """No edges: every node is its own component."""
+        z = jnp.zeros(0, jnp.int32)
+        tree, labels = _boruvka(4, z, z, jnp.zeros(0), jnp.zeros(0, bool))
+        assert tree.shape == (0,)
+        np.testing.assert_array_equal(np.asarray(labels), np.arange(4))
+
+    def test_duplicate_pair_is_used_once(self):
+        """(i, j) listed twice (as kNN lists do) enters the tree once."""
+        lo, hi = jnp.array([0, 0, 1]), jnp.array([1, 1, 2])
+        w, valid = jnp.array([1.0, 1.0, 2.0]), jnp.ones(3, bool)
+        tree, _ = _boruvka(3, lo, hi, w, valid)
+        assert int(tree.sum()) == 2
+
+    def test_largest_component(self):
+        """Largest real component; ties to the lowest label; padding not counted."""
+        labels = jnp.array([0, 0, 2, 2, 4, 5])
+        real = jnp.array([True, True, True, True, True, False])
+        mask, n_comp = gr.largest_component(labels, real)
+        np.testing.assert_array_equal(np.asarray(mask), [1, 1, 0, 0, 0, 0])
+        assert int(n_comp) == 3

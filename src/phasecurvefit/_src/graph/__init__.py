@@ -8,4 +8,9 @@ Imports only the standard library, numpy, jax, jaxtyping and equinox -- never
 the parent package -- so it can be lifted into its own library.
 """
 
-__all__: tuple[str, ...] = ()
+__all__: tuple[str, ...] = (
+    "boruvka",
+    "largest_component",
+)
+
+from ._boruvka import boruvka, largest_component
