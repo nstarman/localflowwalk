@@ -264,6 +264,32 @@ class TestSigmaClip:
         )
         np.testing.assert_array_equal(np.flatnonzero(got), want)
 
+    @pytest.mark.parametrize("extra", [0, 7], ids=["pairs", "pairs+7"])
+    def test_fragmentation_matches_host(self, extra):
+        """Cuts that shatter the stream stop instead of rejecting most of it."""
+        gaps = np.tile([1.0, 10.0], 300)
+        if extra:
+            gaps = np.r_[gaps, np.ones(extra - 1), 10.0]
+        x = np.concatenate([[0.0], np.cumsum(gaps)])
+        p = np.c_[x, np.zeros_like(x)].astype(np.float32)
+        n = len(p)
+        lo, hi, d = _knn_graph(p, 4)
+        args = tuple(map(jnp.asarray, (lo, hi, d, np.ones(len(lo), bool))))
+        tree, labels = _boruvka(n, *args)
+        alive = np.asarray(labels) == np.asarray(labels)[0]
+        clip = jax.jit(
+            functools.partial(gr.sigma_clip, sigma=0.1, max_iters=5),
+            static_argnums=0,
+        )
+        got = np.asarray(clip(n, args[0], args[1], args[2], tree, jnp.asarray(alive)))
+        tm = np.asarray(tree)
+        t = csr_matrix((d[tm], (lo[tm], hi[tm])), shape=(n, n))
+        want = _sigma_clip_edges(
+            t + t.T, p, np.flatnonzero(alive), sigma=0.1, max_iters=5
+        )
+        np.testing.assert_array_equal(np.flatnonzero(got), want)
+        assert got.sum() == n  # nothing rejected
+
 
 def _brute_nearest(p):
     def nearest(labels):

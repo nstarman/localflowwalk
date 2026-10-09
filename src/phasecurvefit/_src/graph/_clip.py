@@ -12,6 +12,7 @@ from ._boruvka import boruvka
 
 MIN_RATIO = 2.0  # never cut an edge shorter than MIN_RATIO * median length
 SMALL_FRAC = 0.01  # reject split-off pieces smaller than this share of alive
+MAX_REJECT_FRAC = 0.5  # never reject more than this share of alive at once
 MAD_SCALE = 1.4826  # MAD -> Gaussian sigma
 
 
@@ -40,7 +41,8 @@ def sigma_clip(
     Mirrors ``_sigma_clip_edges``: in log space, cut tree edges longer than
     ``median + max(sigma * 1.4826 * MAD, log MIN_RATIO)``, then reject only the
     split-off pieces smaller than ``max(2, ceil(SMALL_FRAC * alive))``; repeat
-    until nothing positive, nothing cut, nothing small or every piece small, or
+    until nothing positive, nothing cut, nothing small, or the small pieces
+    would hold more than ``MAX_REJECT_FRAC`` of alive (fragmentation), or
     ``max_iters``.
     """
     if lo.shape[0] == 0 or n < 2:
@@ -72,10 +74,12 @@ def sigma_clip(
         size = jnp.zeros(n, jnp.int32).at[label].add(1)
         size_min = jnp.maximum(2, (jnp.sum(alive) + 99) // 100)  # ceil(0.01 a)
         small = alive & (size[label] < size_min)
-        # stop if nothing to cut, nothing small, or *every* piece is small
-        # (no main body to keep: rejecting would empty the stream)
+        # stop if nothing to cut, nothing small, or the small pieces would hold
+        # more than MAX_REJECT_FRAC of alive: that is fragmentation of the
+        # stream, not outlier rejection. 2 * small > alive is exact (frac 1/2).
         n_small, n_alive = jnp.sum(small), jnp.sum(alive)
-        stop = ~jnp.any(pos) | ~jnp.any(cut) | (n_small == 0) | (n_small == n_alive)
+        fragmented = 2 * n_small > n_alive
+        stop = ~jnp.any(pos) | ~jnp.any(cut) | (n_small == 0) | fragmented
         return jnp.where(stop, alive, alive & ~small), stop, it + 1
 
     return jax.lax.while_loop(cond, body, (alive, jnp.zeros((), bool), 0))[0]
