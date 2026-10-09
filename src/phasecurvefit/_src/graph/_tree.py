@@ -54,7 +54,7 @@ def diameter_path(
     t_lo = jnp.full(m, n).at[slot].set(lo, mode="drop")
     t_hi = jnp.full(m, n).at[slot].set(hi, mode="drop")
     tw = jnp.zeros(m, w.dtype).at[slot].set(w, mode="drop")
-    tv = jnp.zeros(m, bool).at[slot].set(True, mode="drop")
+    tv = jnp.zeros(m, bool).at[slot].set(use, mode="drop")
 
     # 2m arcs; arc a's twin is a +- m. Sort by (valid first, src, dst).
     src0, dst0 = jnp.concat([t_lo, t_hi]), jnp.concat([t_hi, t_lo])
@@ -88,7 +88,7 @@ def diameter_path(
 
     nodes = jnp.arange(n)
     dist, _, _, down = _parents(n, src, dst, aw, pos, ok, twin)
-    entered = jnp.zeros(n, bool).at[jnp.where(down, dst, n)].set(True, mode="drop")
+    entered = jnp.zeros(n, bool).at[jnp.where(down, dst, n)].set(down, mode="drop")
     in_piece = entered | (nodes == r)
     a = jnp.argmax(jnp.where(in_piece, dist, -1))
 

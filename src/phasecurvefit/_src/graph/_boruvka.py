@@ -51,7 +51,7 @@ def boruvka(
         other = jnp.where(cl[b] == nodes, ch[b], cl[b])
         mutual = best.at[other].get(mode="fill", fill_value=e) == best
         hook = has & ~(mutual & (nodes < other))
-        tree = tree.at[jnp.where(has, best, e)].set(True, mode="drop")
+        tree = tree.at[jnp.where(has, best, e)].set(has, mode="drop")
         labels = find_roots(jnp.where(hook, other, nodes))[labels]
         return labels, tree, jnp.any(has), it + 1
 

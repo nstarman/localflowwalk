@@ -53,7 +53,7 @@ def sigma_clip(
     lo = jnp.full(m, n, jnp.int32).at[slot].set(lo, mode="drop")
     hi = jnp.full(m, n, jnp.int32).at[slot].set(hi, mode="drop")
     d = jnp.zeros(m, d.dtype).at[slot].set(d, mode="drop")
-    tree_mask = jnp.zeros(m, bool).at[slot].set(True, mode="drop")
+    tree_mask = jnp.zeros(m, bool).at[slot].set(tree_mask, mode="drop")
     lo, hi = jnp.minimum(lo, n - 1), jnp.minimum(hi, n - 1)  # unused slots: masked
     log_floor = math.log(MIN_RATIO)
     logd = jnp.log(jnp.where(d > 0, d, 1.0))

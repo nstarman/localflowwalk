@@ -489,7 +489,9 @@ class MSTOrderer(AbstractOrderer):
         leave the rest unvisited), ``"largest"`` (same, silently), or
         ``"connect"`` (join the pieces along their shortest links and order
         everything; the bridge links ignore ``jump_cap`` and velocity severing,
-        which is what split the graph).
+        which is what split the graph). ``"connect"`` always finds the bridging
+        links with the exact kd-tree (``exclude`` query), whichever ``neighbors``
+        backend is set.
     edge_clip_sigma
         Optional outlier rejection by MST edge length. If not ``None``, robustly
         sigma-clip the backbone's *spatial* edge lengths in log space: cut edges

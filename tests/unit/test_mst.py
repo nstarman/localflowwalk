@@ -1,5 +1,8 @@
 """Tests for the MST-backbone orderer (``pcf.orderers.MSTOrderer``)."""
 
+import functools
+import re
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -8,6 +11,7 @@ import pytest
 import phasecurvefit as pcf
 from phasecurvefit._src.abstract_result import AbstractResult
 from phasecurvefit._src.optional_deps import OptDeps
+from phasecurvefit._src.orderers import mst
 
 
 def _open_arc(n=200, seed=0):
@@ -859,6 +863,34 @@ def _two_segments():
 
 class TestMSTPureJax:
     """The JAX backends' graph stage runs in pure JAX: no host computation."""
+
+    @pytest.mark.parametrize("connect", [False, True])
+    def test_connect_kernel_folds_no_large_constants(self, connect):
+        """No constant scatter updates or masks: XLA folds them to big literals."""
+        n = 256
+        P = jax.random.normal(jax.random.key(0), (n, 2))
+        nbr, _ = pcf.neighbors.BucketKDTree().knn(P, 5)
+        fn = jax.jit(
+            functools.partial(
+                mst._jax_graph,
+                jump_cap=1.0,
+                velocity_weight=0.0,
+                sever_cos_threshold=None,
+                orient_by_velocity=False,
+                connect=connect,
+                edge_clip_sigma=None,
+                edge_clip_max_iters=5,
+            )
+        )
+        hlo = fn.lower(P, P, nbr, jnp.ones(n, bool)).compile().as_text()
+        big = []
+        for line in hlo.splitlines():
+            if " constant(" in line:
+                m = re.search(r"\w+\[([\d,]*)\]", line)
+                size = int(np.prod([int(s) for s in m.group(1).split(",") if s]))
+                if size > n // 2:
+                    big.append(line.strip())
+        assert not big, big
 
     @pytest.mark.parametrize("mode", ["raise", "warn", "largest", "connect"])
     def test_no_host_callbacks(self, mode):

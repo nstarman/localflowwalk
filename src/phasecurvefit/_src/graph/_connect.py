@@ -62,7 +62,7 @@ def connect(
         blo = blo.at[slot].set(jnp.minimum(i_star, j_star).astype(i32), mode="drop")
         bhi = bhi.at[slot].set(jnp.maximum(i_star, j_star).astype(i32), mode="drop")
         bd = bd.at[slot].set(jnp.sqrt(dd[i_star]), mode="drop")
-        bv = bv.at[slot].set(True, mode="drop")
+        bv = bv.at[slot].set(has, mode="drop")
         # merge: use connected components of this round's bridges
         _, rep_labels = boruvka(n, nodes, other, jnp.zeros(n, dist_dtype), has)
         labels = rep_labels[labels]
