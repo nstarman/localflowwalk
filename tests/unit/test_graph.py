@@ -305,3 +305,27 @@ class TestConnect:
         t = minimum_spanning_tree(_connect_components(p, g, workers=1)).tocoo()
         want = {(min(i, j), max(i, j)) for i, j in zip(t.row, t.col, strict=True)}
         assert _edge_set(all_lo, all_hi, tree) == want
+
+    def test_tied_distances_cycle(self):
+        """Tied distances that form cycles are broken correctly.
+
+        Repro: 1D points [0,10,20,21,1,11] with labels [0,1,2,0,1,2].
+        Components A={0,3}, B={1,4}, C={2,5} form a pick cycle at distance 1.
+        """
+        p = np.array([[0], [10], [20], [21], [1], [11]], dtype=np.float32)
+        labels = jnp.array([0, 1, 2, 0, 1, 2], dtype=jnp.int32)
+        real = jnp.ones(6, bool)
+
+        blo, bhi, bd, bv = jax.jit(gr.connect, static_argnums=2)(
+            labels, real, _brute_nearest(jnp.asarray(p))
+        )
+
+        # Bridges, taken between component labels, must join all components
+        _, comp = _boruvka(3, labels[blo], labels[bhi], bd, bv)
+        assert np.all(np.asarray(comp) == 0), "bridges must form one component"
+
+        # Every valid bridge should have length 1.0 (the tied distance)
+        valid_distances = np.asarray(bd)[np.asarray(bv)]
+        assert np.allclose(valid_distances, 1.0), (
+            "all bridges should be at distance 1.0"
+        )

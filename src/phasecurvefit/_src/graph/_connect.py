@@ -8,7 +8,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Bool, Int
 
-from ._pointer import find_roots, n_rounds
+from ._boruvka import boruvka
+from ._pointer import n_rounds
 
 Nearest = Callable[[Array], tuple[Array, Array]]
 
@@ -62,12 +63,9 @@ def connect(
         bhi = bhi.at[slot].set(jnp.maximum(i_star, j_star).astype(i32), mode="drop")
         bd = bd.at[slot].set(jnp.sqrt(dd[i_star]), mode="drop")
         bv = bv.at[slot].set(True, mode="drop")
-        # merge: mutual picks hook only from the larger label
-        mutual = has & (other.at[other].get(mode="fill", fill_value=n) == nodes)
-        mutual = mutual & has.at[other].get(mode="fill", fill_value=False)
-        hook = has & ~(mutual & (nodes < other))
-        parent = jnp.where(hook, other, nodes)
-        labels = find_roots(parent)[labels]
+        # merge: use connected components of this round's bridges
+        _, rep_labels = boruvka(n, nodes, other, jnp.zeros(n, dist_dtype), has)
+        labels = rep_labels[labels]
         used = used + jnp.sum(has, dtype=i32)
         return labels, blo, bhi, bd, bv, used, jnp.any(has), it + 1
 
