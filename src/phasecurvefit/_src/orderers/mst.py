@@ -85,6 +85,8 @@ _EDGE_CLIP_MIN_RATIO = 2.0
 # fewer than this fraction of the working points. Larger pieces are kept and
 # reconnected, so cutting a genuine sparse-region edge never discards stream.
 _EDGE_CLIP_SMALL_FRAC = 0.01
+# Never reject more than this fraction of the working points in one iteration.
+_EDGE_CLIP_MAX_REJECT_FRAC = 0.5
 
 
 # A single, long-lived worker thread that runs every _run_in_thread() job.
@@ -171,7 +173,10 @@ def _sigma_clip_edges(
        ``tree``, so cutting a genuine sparse-region edge cannot discard half the
        stream;
     3. recompute the statistic on the survivors and repeat, until nothing small
-       is split off (or ``max_iters``).
+       is split off (or ``max_iters``). If the small pieces would hold more than
+       ``_EDGE_CLIP_MAX_REJECT_FRAC`` of the working points, the cuts have
+       fragmented the stream rather than isolated interlopers, so clipping
+       stops and keeps them.
 
     Returns the surviving node set (a subset of ``nodes``, in ascending order).
     """
@@ -212,8 +217,8 @@ def _sigma_clip_edges(
         small = alive & (sizes[labels] < size_min)
         if not small.any():  # cuts split off nothing small (e.g. a sparse gap)
             break
-        if small.sum() == alive.sum():  # every piece is small: no main body
-            break
+        if small.sum() > _EDGE_CLIP_MAX_REJECT_FRAC * alive.sum():
+            break  # no main body: this is fragmentation, not outlier rejection
         alive &= ~small
     return nodes[alive]
 
@@ -311,7 +316,7 @@ def _host_graph(
     exactly as before the backends existed, so backends that return the same
     neighbours give the same graph. (With equidistant neighbours, only
     ``BucketKDTree`` and ``BruteForce`` are guaranteed to agree: both take the
-    lower index.)
+    lower index, for ``BucketKDTree`` up to n ~ 2**24.)
 
     Returns ``(backbone (n,) int32 padded by repeating its last index,
     backbone_len int32, in_component (n,) bool, flip bool)``; ``flip`` says the
@@ -469,7 +474,7 @@ class MSTOrderer(AbstractOrderer):
         The exact kNN backend (``phasecurvefit.neighbors``): ``BucketKDTree()``
         (default; JAX-native, traceable), ``BruteForce()``, ``JaxKD()``
         (optional dependency), or ``SciPy(workers=-1)`` (fastest on CPU, but
-        eager-only: it raises under jit/vmap/grad).
+        host-only: it raises when its inputs are traced by jit/vmap/grad).
 
     Examples
     --------

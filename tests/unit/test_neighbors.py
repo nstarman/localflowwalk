@@ -160,10 +160,11 @@ class TestContract:
             ((np.ones((5, 2)), 0), {}),
             ((np.ones((5, 2)), -1), {}),
             ((np.ones((5, 2)), 2.0), {}),
+            ((np.ones((5, 2)), True), {}),
             ((np.ones(5), 2), {}),
             ((np.ones((5, 2)), 2), {"queries": np.ones((3, 3))}),
         ],
-        ids=["k0", "k-1", "kfloat", "1d", "query-dim"],
+        ids=["k0", "k-1", "kfloat", "kbool", "1d", "query-dim"],
     )
     def test_invalid_args_raise(self, backend, args, kwargs):
         """Bad k or shapes raise the same ValueError from every backend."""
@@ -177,6 +178,26 @@ class TestContract:
         q[2, 0] = np.nan
         with pytest.raises(ValueError, match="finite"):
             backend.knn(jnp.asarray(p), 3, queries=jnp.asarray(q))
+
+    @pytest.mark.parametrize("scale", [1e19, 3e19, 1e30])
+    def test_huge_coordinates_float32(self, backend, scale):
+        """Squared distances that overflow float32 still give real neighbours.
+
+        1 kpc is ~3.1e19 m: unscaled, these d2 overflow to inf and came back as
+        sentinels. Coordinates are scaled by a power of two (exact) first.
+        """
+        p = (np.random.default_rng(4).normal(size=(30, 3)) * scale).astype(np.float32)
+        idx, dist = map(np.asarray, backend.knn(jnp.asarray(p), 2))
+        assert np.all(idx < 30)
+        np.testing.assert_allclose(dist, _ref(p, 2), rtol=1e-5)
+
+    def test_non_finite_with_empty_input_raises(self, backend):
+        """NaN is caught even when the other input is empty."""
+        nan = jnp.full((2, 3), jnp.nan, jnp.float32)
+        empty = jnp.zeros((0, 3), jnp.float32)
+        for pts, qs in ((empty, nan), (nan, empty)):
+            with pytest.raises(ValueError, match="finite"):
+                backend.knn(pts, 2, queries=qs)
 
     def test_non_finite_raises(self, backend):
         """Review Focus 2: NaN input is an error, not a silently wrong answer."""
@@ -208,19 +229,50 @@ class TestTracing:
         np.testing.assert_array_equal(np.asarray(eager), np.asarray(jitted))
         np.testing.assert_array_equal(np.asarray(eager), np.asarray(brute))
 
-    def test_gradient_matches_brute_force(self):
-        """The kd-tree's distance gradient equals brute force's (tie-free data)."""
+    @pytest.mark.parametrize(
+        "make",
+        [
+            pytest.param(pcf.neighbors.BucketKDTree, id="bucket"),
+            pytest.param(pcf.neighbors.JaxKD, id="jaxkd", marks=[_NO_JAXKD]),
+        ],
+    )
+    def test_gradient_matches_brute_force(self, make):
+        """Distance gradients equal brute force's (tie-free data)."""
         p = jnp.asarray(np.random.default_rng(6).normal(size=(64, 3)), jnp.float32)
 
         def loss(backend):
             return jax.grad(lambda x: jnp.sum(backend.knn(x, 4)[1] ** 1.5))(p)
 
         np.testing.assert_allclose(
-            np.asarray(loss(pcf.neighbors.BucketKDTree())),
+            np.asarray(loss(make())),
             np.asarray(loss(pcf.neighbors.BruteForce())),
             rtol=1e-5,
             atol=1e-6,
         )
+
+    def test_non_finite_raises_under_jit(self, jax_backend):
+        """Traced NaN input is a runtime error too, not a silently wrong answer."""
+        p = np.random.default_rng(0).normal(size=(50, 3)).astype(np.float32)
+        p[3, 1] = np.nan
+        with pytest.raises(Exception, match="finite"):
+            jax.block_until_ready(jax.jit(lambda x: jax_backend.knn(x, 5))(p))
+
+    @pytest.mark.parametrize("queries", [False, True])
+    def test_vmap_matches_loop(self, jax_backend, queries):
+        """Vmap over a batch of clouds equals separate eager calls."""
+        rng = np.random.default_rng(8)
+        pb = jnp.asarray(rng.normal(size=(3, 120, 3)), jnp.float32)
+        qb = jnp.asarray(rng.normal(size=(3, 9, 3)), jnp.float32)
+        if queries:
+            got = jax.vmap(lambda a, b: jax_backend.knn(a, 4, queries=b))(pb, qb)
+        else:
+            got = jax.vmap(lambda a: jax_backend.knn(a, 4))(pb)
+        for i in range(3):
+            want = jax_backend.knn(pb[i], 4, queries=qb[i] if queries else None)
+            np.testing.assert_array_equal(np.asarray(got[0][i]), np.asarray(want[0]))
+            np.testing.assert_allclose(
+                np.asarray(got[1][i]), np.asarray(want[1]), rtol=1e-6
+            )
 
     def test_scipy_raises_when_traced(self):
         """The scipy backend is eager-only."""
@@ -283,6 +335,21 @@ class TestBucketing:
         idx, dist = pcf.neighbors.BucketKDTree().knn(jnp.asarray(p), 3)
         assert np.all(np.asarray(idx) < 41)
         np.testing.assert_allclose(np.asarray(dist), _ref(p, 3), rtol=1e-5)
+
+
+def test_scipy_empty_points_does_not_build_a_tree(monkeypatch):
+    """SciPy's n == 0 result comes from the backend, not from cKDTree."""
+    import scipy.spatial  # noqa: PLC0415
+
+    def boom(*_args, **_kwargs):
+        msg = "cKDTree built for empty points"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(scipy.spatial, "cKDTree", boom)
+    q = jnp.ones((3, 2), jnp.float32)
+    idx, dist = pcf.neighbors.SciPy().knn(jnp.zeros((0, 2)), 4, queries=q)
+    assert np.all(np.asarray(idx) == 0)
+    assert np.all(np.isinf(np.asarray(dist)))
 
 
 class TestConstruction:
