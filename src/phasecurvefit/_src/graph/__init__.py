@@ -14,8 +14,10 @@ __all__: tuple[str, ...] = (
     "knn_edges",
     "largest_component",
     "orient_flip",
+    "sigma_clip",
 )
 
 from ._boruvka import boruvka, largest_component
+from ._clip import sigma_clip
 from ._edges import knn_edges, orient_flip
 from ._tree import diameter_path

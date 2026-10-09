@@ -15,7 +15,11 @@ from scipy.sparse.csgraph import connected_components, minimum_spanning_tree
 
 from phasecurvefit._src import graph as gr
 from phasecurvefit._src.graph._pointer import accumulate, find_roots, list_rank
-from phasecurvefit._src.orderers.mst import _diameter_path, _edge_cosine
+from phasecurvefit._src.orderers.mst import (
+    _diameter_path,
+    _edge_cosine,
+    _sigma_clip_edges,
+)
 
 _boruvka = jax.jit(gr.boruvka, static_argnums=0)
 _diameter = jax.jit(gr.diameter_path, static_argnums=0)
@@ -211,3 +215,50 @@ class TestEdges:
         full, blen = jnp.arange(5), jnp.asarray(5)
         assert bool(gr.orient_flip(p, v, full, blen))
         assert not bool(gr.orient_flip(p, -v, full, blen))
+
+
+def _stream(n, seed, interlopers):
+    rng = np.random.default_rng(seed)
+    t = np.linspace(0, 1, n)
+    p = np.c_[10 * t, np.sin(3 * t), 0.3 * np.cos(2 * t)] + rng.normal(0, 0.02, (n, 3))
+    m = int(interlopers * n)
+    if m:
+        i = rng.choice(n, m, replace=False)
+        p[i] = rng.uniform(p.min(0) - 3, p.max(0) + 3, (m, 3))
+    return p[rng.permutation(n)].astype(np.float32)
+
+
+def _knn_graph(p, k):
+    d2 = ((p[:, None] - p[None]) ** 2).sum(-1)
+    np.fill_diagonal(d2, np.inf)
+    nbr = np.argsort(d2, 1)[:, :k]
+    rows = np.repeat(np.arange(len(p)), k)
+    cols = nbr.ravel()
+    d = np.linalg.norm(p[rows] - p[cols], axis=1).astype(np.float32)
+    return np.minimum(rows, cols), np.maximum(rows, cols), d
+
+
+class TestSigmaClip:
+    """Clipping keeps the same nodes as ``_sigma_clip_edges``."""
+
+    @pytest.mark.parametrize("seed", range(6))
+    @pytest.mark.parametrize("sigma", [1.5, 3.0])
+    def test_matches_host(self, seed, sigma):
+        """Interlopers rejected, the stream kept -- node for node."""
+        p = _stream(400, seed, interlopers=0.03)
+        n = len(p)
+        lo, hi, d = _knn_graph(p, 8)
+        valid = np.ones(len(lo), bool)
+        args = tuple(map(jnp.asarray, (lo, hi, d, valid)))
+        tree, labels = _boruvka(n, *args)
+        alive = np.asarray(labels) == np.asarray(labels)[0]
+        clip = jax.jit(
+            functools.partial(gr.sigma_clip, sigma=sigma, max_iters=5), static_argnums=0
+        )
+        got = np.asarray(clip(n, args[0], args[1], args[2], tree, jnp.asarray(alive)))
+        tm = np.asarray(tree)
+        t = csr_matrix((d[tm], (lo[tm], hi[tm])), shape=(n, n))
+        want = _sigma_clip_edges(
+            t + t.T, p, np.flatnonzero(alive), sigma=sigma, max_iters=5
+        )
+        np.testing.assert_array_equal(np.flatnonzero(got), want)
