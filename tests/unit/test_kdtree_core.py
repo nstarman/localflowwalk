@@ -360,6 +360,14 @@ def _labels(kind, n, rng):
 class TestExclude:
     """``knn(..., exclude=(point_labels, query_labels))`` skips same-label points."""
 
+    def test_no_exclude_threads_no_labels(self):
+        """Unused ``exclude`` adds nothing: the query map maps (x, self, leaf) only."""
+        p = jnp.zeros((40, 2), jnp.float32)
+        jaxpr = jax.make_jaxpr(lambda p: kd.all_knn(p, 4))(p).jaxpr
+        (scan,) = [e for e in jaxpr.eqns if e.primitive.name == "scan"]
+        n_xs = len(scan.invars) - scan.params["num_consts"] - scan.params["num_carry"]
+        assert n_xs == 3
+
     def _check(self, n, d, kind, k, frontier=16, seed=0):
         rng = np.random.default_rng(seed)
         p = rng.normal(size=(n, d)).astype(np.float32)

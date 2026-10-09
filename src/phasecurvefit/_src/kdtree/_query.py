@@ -189,7 +189,7 @@ def _bound(tree: Tree, xq: Array, qself: Array, qleaf: Array, k: int, /) -> Arra
     return kth_smallest(d2, k)
 
 
-Handler = Callable[[Array, Array, Array, Array], tuple[Array, Array, Array]]
+Handler = Callable[..., tuple[Array, Array, Array]]
 
 
 def _finish(
@@ -201,7 +201,7 @@ def _finish(
     r2: Array,
     chunk: int,
     handler: Handler,
-    qlab: Array,
+    qlab: Array | None = None,
     /,
 ) -> tuple[Array, Array, Array, Array]:
     """Rerun ``handler`` on the queries flagged in ``over`` (compacted, chunked)."""
@@ -221,8 +221,11 @@ def _finish(
         xs = xq.at[q].get(mode="fill", fill_value=0)
         ss = qself.at[q].get(mode="fill", fill_value=-1)
         rs = r2.at[q].get(mode="fill", fill_value=jnp.inf)
-        qs = qlab.at[q].get(mode="fill", fill_value=0)
-        d_new, i_new, o_new = handler(xs, ss, rs, qs)
+        if qlab is None:
+            d_new, i_new, o_new = handler(xs, ss, rs)
+        else:
+            qs = qlab.at[q].get(mode="fill", fill_value=0)
+            d_new, i_new, o_new = handler(xs, ss, rs, qs)
         r2 = r2.at[q].set(jnp.minimum(rs, d_new[:, -1]), mode="drop")
         return (
             j + 1,
@@ -255,10 +258,10 @@ def _query(
     ``exclude = (row_labels, node_labels, query_labels)`` (see
     :func:`node_labels`) skips every point sharing the query's label.
     """
-    qlab = jnp.zeros(xq.shape[0], jnp.int32) if exclude is None else exclude[2]
+    qlab = () if exclude is None else (exclude[2],)  # per-query labels, if any
     rl, hl = (None, None) if exclude is None else exclude[:2]
 
-    def ex_of(ql: Array) -> tuple | None:
+    def ex_of(ql: Array | None) -> tuple | None:
         return None if exclude is None else (rl, hl, ql)
 
     nq, d = xq.shape
@@ -270,7 +273,8 @@ def _query(
         return jnp.concat([a, jnp.full((padn, *a.shape[1:]), fill, a.dtype)])
 
     def chunk(args: tuple[Array, ...]) -> tuple[Array, ...]:
-        x, s, lf, ql = args
+        x, s, lf, *ql = args
+        ql = next(iter(ql), None)
         if exclude is None:
             r2 = _bound(tree, x, s, lf, k)
         else:
@@ -279,15 +283,13 @@ def _query(
         dd, ii = _merge(tree, x, s, front, k, top_k=False, ex=ex_of(ql))
         return dd, ii, over, r2
 
-    dd, ii, over, r2 = jax.lax.map(
-        chunk,
-        (
-            pad(xq, 0).reshape(n_chunks, qc, d),
-            pad(qself, -1).reshape(n_chunks, qc),
-            pad(qleaf, 0).reshape(n_chunks, qc),
-            pad(qlab, 0).reshape(n_chunks, qc),
-        ),
+    inputs = (
+        pad(xq, 0).reshape(n_chunks, qc, d),
+        pad(qself, -1).reshape(n_chunks, qc),
+        pad(qleaf, 0).reshape(n_chunks, qc),
+        *(pad(a, 0).reshape(n_chunks, qc) for a in qlab),
     )
+    dd, ii, over, r2 = jax.lax.map(chunk, inputs)
     dd, ii = dd.reshape(-1, k)[:nq], ii.reshape(-1, k)[:nq]
     over, r2 = over.reshape(-1)[:nq] & qvalid, r2.reshape(-1)[:nq]
     r2 = jnp.minimum(r2, dd[:, -1])  # even a truncated candidate set bounds the k-th
@@ -297,13 +299,13 @@ def _query(
             continue
 
         def tier(
-            xs: Array, ss: Array, rs: Array, qs: Array, cap: int = cap
+            xs: Array, ss: Array, rs: Array, qs: Array | None = None, cap: int = cap
         ) -> tuple[Array, ...]:
             front, o = _descend(tree, xs, rs, cap, ex_of(qs))
             d_new, i_new = _merge(tree, xs, ss, front, k, top_k=True, ex=ex_of(qs))
             return d_new, i_new, o
 
-        dd, ii, over, r2 = _finish(xq, qself, over, dd, ii, r2, tchunk, tier, qlab)
+        dd, ii, over, r2 = _finish(xq, qself, over, dd, ii, r2, tchunk, tier, *qlab)
         over = over & qvalid
 
     pos_all = jnp.arange(tree.n_pad)
@@ -311,7 +313,9 @@ def _query(
     # n~1e6 when any query reaches brute force (rare, ~0.03% on interloper
     # data); upgrade = smaller BRUTE_CHUNK or loop over dimensions.
 
-    def brute(xs: Array, ss: Array, rs: Array, qs: Array) -> tuple[Array, ...]:
+    def brute(
+        xs: Array, ss: Array, rs: Array, qs: Array | None = None
+    ) -> tuple[Array, ...]:
         del rs
         diff = xs[:, None] - tree.points[None]
         d2 = jnp.sum(diff * diff, -1)
@@ -324,7 +328,7 @@ def _query(
         i_new = jnp.where(jnp.isinf(d_new), tree.n, i_new)
         return d_new, i_new, jnp.zeros(xs.shape[0], bool)
 
-    dd, ii, _, _ = _finish(xq, qself, over, dd, ii, r2, BRUTE_CHUNK, brute, qlab)
+    dd, ii, _, _ = _finish(xq, qself, over, dd, ii, r2, BRUTE_CHUNK, brute, *qlab)
     return dd, ii
 
 
