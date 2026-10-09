@@ -16,6 +16,7 @@ from scipy.sparse.csgraph import connected_components, minimum_spanning_tree
 from phasecurvefit._src import graph as gr
 from phasecurvefit._src.graph._pointer import accumulate, find_roots, list_rank
 from phasecurvefit._src.orderers.mst import (
+    _connect_components,
     _diameter_path,
     _edge_cosine,
     _sigma_clip_edges,
@@ -262,3 +263,45 @@ class TestSigmaClip:
             t + t.T, p, np.flatnonzero(alive), sigma=sigma, max_iters=5
         )
         np.testing.assert_array_equal(np.flatnonzero(got), want)
+
+
+def _brute_nearest(p):
+    def nearest(labels):
+        d2 = jnp.sum((p[:, None] - p[None]) ** 2, -1)
+        d2 = jnp.where(labels[:, None] == labels[None], jnp.inf, d2)
+        j = jnp.argmin(d2, 1)
+        dd = jnp.min(d2, 1)
+        return jnp.where(jnp.isinf(dd), p.shape[0], j), dd
+
+    return nearest
+
+
+class TestConnect:
+    """Bridging gives the same final MST as ``_connect_components``."""
+
+    @pytest.mark.parametrize("seed", range(8))
+    def test_matches_host(self, seed):
+        """Pieces of a cut stream are bridged into scipy's spanning tree."""
+        rng = np.random.default_rng(seed)
+        p = _stream(int(rng.integers(30, 300)), seed, interlopers=0.0)
+        n = len(p)
+        lo, hi, d = _knn_graph(p, 4)
+        valid = d <= float(rng.choice([0.02, 0.05, 0.2]))
+        _, labels = _boruvka(n, *map(jnp.asarray, (lo, hi, d, valid)))
+        real = jnp.ones(n, bool)
+        blo, bhi, bd, bv = jax.jit(gr.connect, static_argnums=2)(
+            labels, real, _brute_nearest(jnp.asarray(p))
+        )
+        all_lo = np.r_[lo, np.asarray(blo)]
+        all_hi = np.r_[hi, np.asarray(bhi)]
+        all_w = np.r_[d, np.asarray(bd)]
+        all_valid = np.r_[valid, np.asarray(bv)]
+        tree, labels = map(
+            np.asarray,
+            _boruvka(n, *map(jnp.asarray, (all_lo, all_hi, all_w, all_valid))),
+        )
+        assert np.all(labels == 0)  # one component
+        g, _ = _scipy_graph(n, lo, hi, d, valid)
+        t = minimum_spanning_tree(_connect_components(p, g, workers=1)).tocoo()
+        want = {(min(i, j), max(i, j)) for i, j in zip(t.row, t.col, strict=True)}
+        assert _edge_set(all_lo, all_hi, tree) == want
