@@ -150,7 +150,7 @@ for label, backend in (("SciPy", N.SciPy()), ("BucketKDTree", N.BucketKDTree()),
                        ("BruteForce", N.BruteForce())):
     o = pcf.orderers.MSTOrderer(k=10, jump_cap=2.0, neighbors=backend)
     orders[label] = np.asarray(o.order(pos_d, vel_d).indices)
-oj = pcf.orderers.MSTOrderer(k=10, jump_cap=2.0)
+oj = pcf.orderers.MSTOrderer(k=10, jump_cap=2.0, neighbors=N.BucketKDTree())
 orders["BucketKDTree (jit)"] = np.asarray(jax.jit(lambda p, v: oj.order(p, v).indices)(pos_d, vel_d))
 
 
