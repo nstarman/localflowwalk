@@ -84,6 +84,8 @@ result.ordering  # sample indices, tip to tip
 
 <!--
 - An ordering is discrete; science needs a continuous track γ -> position.
+- Full pipeline: MST -> SOM -> autoencoder. The MST | SOM ordering from the
+  previous figure is the autoencoder's training input.
 - PathAutoencoder: encoder gives every sample a γ (including ones an orderer
   skipped); decoder gives a smooth track. Decoder is swappable (FourierTrackNet
   for sharp bends here).
@@ -93,8 +95,9 @@ result.ordering  # sample indices, tip to tip
 
 ![Samples coloured by learned γ with the smooth learned track](images/03-track.png)
 
-_The autoencoder assigns an ordering parameter γ to every sample and learns a
-smooth track that follows each loop and crossing._
+_Trained on the MST | SOM ordering, the autoencoder assigns an ordering
+parameter γ to every sample and learns a smooth track that follows each loop and
+crossing._
 
 ## Other things it does
 

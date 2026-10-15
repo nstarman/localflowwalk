@@ -114,12 +114,12 @@ decoder = pcf.nn.FourierTrackNet(
     out_size=2, n_frequencies=12, width_size=256, depth=4, key=dec_key
 )
 model = pcf.nn.PathAutoencoder.make(
-    normalizer, gamma_range=res_vel.gamma_range, decoder=decoder, key=enc_key
+    normalizer, gamma_range=res_som.gamma_range, decoder=decoder, key=enc_key
 )
 config = pcf.nn.TrainingConfig(
     n_epochs_encoder=800, n_epochs_decoder=1200, n_epochs_both=0
 )
-ae, _, _ = pcf.nn.train_autoencoder(model, res_vel, key=train_key, config=config)
+ae, _, _ = pcf.nn.train_autoencoder(model, res_som, key=train_key, config=config)
 
 gamma, _ = ae.model.encode(qs, ps)
 track = ae(jnp.linspace(*ae.gamma_range, 1_000))
