@@ -167,6 +167,7 @@ ignore = [
   "T20",
 ]
 "__init__.py" = ["F403"]
+"blog/**" = ["ALL"] # blog-draft figure script, moves to pyOpenSci
 "conftest.py" = ["ANN", "PLC0415"]
 "docs/**" = ["N803", "T201"]
 "docs/conf.py" = ["A001", "INP001", "T201"]
