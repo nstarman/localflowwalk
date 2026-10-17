@@ -30,22 +30,22 @@ Figures: `uv run --group docs python blog/make_figures.py`
 
 <!-- Hook (2-3 sentences). -->
 
-Lots of data are samples scattered along a curve: stars in a stellar stream,
-particles along an orbit, a trajectory seen out of order. Before you can fit a
-model you need to know _where along the curve_ each sample sits. `phasecurvefit`
-answers that question, and it has recently been
-[accepted into the pyOpenSci ecosystem](https://github.com/pyOpenSci/software-submission/issues/285).
+- Data often lie along a curve but arrive shuffled.
+- Examples: stellar streams, orbits, trajectories, time series seen out of
+  order.
+- First question before any fit: where along the curve is each sample?
+- `phasecurvefit` answers that, and has been
+  [accepted into pyOpenSci](https://github.com/pyOpenSci/software-submission/issues/285).
 
 ## The problem: order is lost
 
-<!--
-- Samples come shuffled; you have positions (and often velocities), no ordering.
-- Need two things: an ordering coordinate γ per sample, and a smooth track.
-- Motivating science case: stellar streams (tidal debris from disrupted
-  star clusters / dwarf galaxies) — one or two sentences, link a review.
-- Why naive approaches fail: nearest neighbour / clustering / sorting by angle
-  break when the curve crosses or folds back on itself.
--->
+- Input: positions (and usually velocities), shuffled, no labels.
+- Need 1: an ordering coordinate γ for every sample.
+- Need 2: a smooth track, γ → position.
+- Science case: stellar streams = tidal debris from disrupted clusters/dwarfs.
+- Stream tracks constrain the Milky Way's dark matter; link a review.
+- Naive tools fail: nearest neighbour, clustering, sorting by angle.
+- They fail where it matters: crossings, fold-backs, gaps, noise.
 
 ![Shuffled samples along a self-crossing curve, with velocity arrows](images/01-data.png)
 
@@ -54,13 +54,15 @@ velocities._
 
 ## Positions are not enough
 
-<!--
-- Where two strands cross, the nearest point is often on the other strand.
-- Key idea of phasecurvefit: use the velocity too. At a crossing the strands
-  move in different directions, so links between them can be cut.
-- Walk through the three panels; |ρ| = rank correlation with the true order.
-- Mention the default pipeline needs no start point (MST finds the two tips).
--->
+- At a crossing, the nearest point is often on the other strand.
+- Key idea: use velocities too.
+- Strands at a crossing move in different directions → cut those links.
+- Left panel: positions-only MST zig-zags across strands (|ρ| = 0.26).
+- Middle: velocity-aware MST stays on one strand (|ρ| = 0.90).
+- Right: SOM refinement smooths the backbone (|ρ| = 1.00).
+- Define |ρ|: rank correlation with the true order; 1 is perfect.
+- No start point needed: the MST finds the two tips itself.
+- `|` chains orderers; each stage seeds the next.
 
 ![Spatial MST vs velocity-aware MST vs MST | SOM](images/02-ordering.png)
 
@@ -78,20 +80,16 @@ result = pcf.order(positions, velocities, orderer)
 result.ordering  # sample indices, tip to tip
 ```
 
-<!-- Point out the `|` chaining: each stage seeds the next. -->
-
 ## From an ordering to a track
 
-<!--
-- An ordering is discrete; science needs a continuous track γ -> position.
-- Full pipeline: MST -> SOM -> autoencoder. The MST | SOM ordering from the
-  previous figure is the autoencoder's training input.
-- PathAutoencoder: encoder gives every sample a γ (including ones an orderer
-  skipped); decoder gives a smooth track. Decoder is swappable (FourierTrackNet
-  for sharp bends here).
-- One-liner path: `pcf.fit_track(positions, velocities, key=...)`.
-- Training-free alternative: running-mean track (fast, e.g. inside MCMC).
--->
+- An ordering is discrete; a model needs a continuous track.
+- Full pipeline: MST → SOM → autoencoder.
+- The MST | SOM ordering is the autoencoder's training input.
+- Encoder: phase-space point → γ, for every sample (even skipped ones).
+- Decoder: γ → smooth track.
+- Decoder is swappable; `FourierTrackNet` handles the sharp loops here.
+- One call does it all: `pcf.fit_track(positions, velocities, key=...)`.
+- Need speed (e.g. inside MCMC)? Training-free running-mean track.
 
 ![Samples coloured by learned γ with the smooth learned track](images/03-track.png)
 
@@ -101,15 +99,14 @@ crossing._
 
 ## Other things it does
 
-<!--
-Short bullet list, one line each, link to docs:
-- Outlier rejection: stream + background mixture gives membership probabilities
-  (Hogg, Bovy & Lang 2010).
-- Alternative orderers: local-flow walk (Nibauer et al. 2022), SOM
-  (Starkman et al. 2023); pluggable distance metrics and neighbour strategies.
+- Outlier rejection: stream + background mixture → membership probabilities.
+- Cite Hogg, Bovy & Lang (2010) for the mixture model.
+- Other orderers: local-flow walk (Nibauer et al. 2022).
+- SOM ordering (Starkman et al. 2023).
+- Pluggable distance metrics and neighbour strategies.
 - Physical units via `unxt`.
-- JAX: jit / vmap / grad, CPU/GPU. Differentiable -> usable inside larger models.
--->
+- Built on JAX: `jit`, `vmap`, `grad`; CPU or GPU.
+- Differentiable → can sit inside a larger model or likelihood.
 
 ## Getting started
 
@@ -117,24 +114,32 @@ Short bullet list, one line each, link to docs:
 pip install phasecurvefit[all]
 ```
 
-<!--
-- Minimal example with `pcf.order(positions, velocities)` (default pipeline)
-  and `pcf.fit_track(...)`.
-- Point to the tutorials: stream MST, epitrochoid, outlier rejection.
--->
+- Minimal example: `pcf.order(positions, velocities)` with the default pipeline.
+- Then `pcf.fit_track(positions, velocities, key=...)` for the track.
+- Inputs are plain dicts, e.g. `{"x": ..., "y": ...}`; any dimension.
+- Point to tutorials: stream MST, epitrochoid, outlier rejection.
+- Link the docs quickstart.
 
 ## The pyOpenSci review
 
-<!--
-- What changed through review (concrete: e.g. dependency fix, docs on KDTree,
-  max_dist=0 bug, docstring defaults — see the review thread).
-- Thank the editor and reviewers by name (@ handles).
-- One sentence on why going through pyOpenSci was worth it.
--->
+- Editor: @kysolvik. EiC: @crhea93.
+- Reviewers: @SujataSaurabh, @crhea93.
+- Thank each by name; one specific thing each caught.
+- Concrete fixes from review: missing core dependency.
+- `max_dist=0` walk bug.
+- KDTree docs (a filter, not a speedup).
+- Wrong default metric in docstrings.
+- Link the PRs once merged.
+- Why it was worth it: outside eyes found real bugs.
+- Mention JOSS fast-track if you submit there.
 
 ## Try it out
 
-<!--
-- Links: GitHub, docs, PyPI, pyOpenSci review issue, citation / Zenodo DOI.
-- Invite issues / contributions; it's not just for streams.
--->
+- GitHub: GalacticDynamics/phasecurvefit.
+- Docs: phasecurvefit.readthedocs.io.
+- PyPI: `phasecurvefit`.
+- Cite: Zenodo DOI + `CITATION.cff`.
+- pyOpenSci review issue #285.
+- Not just streams: any ordered phase-space data.
+- Invite issues, use cases, contributions.
+- Co-maintainer @jnibauer: co-author the post?
